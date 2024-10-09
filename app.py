@@ -15,14 +15,14 @@ service = Service(chrome_driver_path)
 options = Options()
 
 # Add headless mode for running without a GUI
-options.add_argument('--headless')
+options.add_argument('--incognito')
+#options.add_argument('--headless')
 options.add_argument('--disable-gpu')
 options.add_argument('--no-sandbox')
 options.add_argument('--disable-dev-shm-usage')
 options.add_argument("window-size=1920x1080")
 options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36")
 
-# Define a route to scrape jobs
 @app.route('/scrape_jobs', methods=['POST'])
 def scrape_jobs():
     input_data = request.json
@@ -33,131 +33,196 @@ def scrape_jobs():
     driver = webdriver.Chrome(service=service, options=options)
 
     try:
-        # Construct the URL based on inputs
-        url = f"https://www.naukri.com/{job_title.replace(' ', '-')}-jobs-in-{location}?experience={experience}"
-        driver.get(url)
+        # Correct URL to filter by job title, location, and experience
+        base_url = f"https://www.naukri.com/{job_title.replace(' ', '-')}-jobs-in-{location}?experience={experience}"
+        page = 1
+        all_jobs_data = []
+        job_count = 0  # Counter to stop after 200 jobs
 
-        # Wait explicitly for the job listings to appear
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.srp-jobtuple-wrapper'))
-        )
+        wait = WebDriverWait(driver, 20)
 
-        # Find all job listings
-        jobs = driver.find_elements(By.CSS_SELECTOR, 'div.srp-jobtuple-wrapper')
+        while job_count < 40:
+            # Modify the URL for pagination
+            if page == 1:
+                page_url = base_url
+            else:
+                page_url = f"https://www.naukri.com/{job_title.replace(' ', '-')}-jobs-in-{location}-{page}?experience={experience}"
 
-        # List to hold all job data
-        job_data_list = []
+            driver.get(page_url)
 
-        for job in jobs:
+            # Wait for the job listings to load
             try:
-                # Extract basic details from the job card
-                job_title = job.find_element(By.CSS_SELECTOR, 'a.title').text
-                company_name = job.find_element(By.CSS_SELECTOR, 'a.comp-name').text
-                rating_element = job.find_elements(By.CSS_SELECTOR, 'a.rating')
-                ratings = rating_element[0].text if rating_element else "No rating"
-                experience = job.find_element(By.CSS_SELECTOR, 'span.expwdth').text
-                salary = job.find_element(By.CSS_SELECTOR, 'span.sal').text
-                location = job.find_element(By.CSS_SELECTOR, 'span.locWdth').text
-                job_description_summary = job.find_element(By.CSS_SELECTOR, 'span.job-desc').text
-                skills_elements = job.find_elements(By.CSS_SELECTOR, 'ul.tags-gt li')
-                skills = [skill.text for skill in skills_elements]
-                posting_date = job.find_element(By.CSS_SELECTOR, 'span.job-post-day').text
-                job_link = job.find_element(By.CSS_SELECTOR, 'a.title').get_attribute('href')
+                wait.until(
+                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div.srp-jobtuple-wrapper'))
+                )
+            except Exception as e:
+                print(f"No job listings found on page {page}. Stopping pagination.")
+                break
 
-                # Open the job detailed page to get more info
-                driver.execute_script("window.open(arguments[0], '_blank');", job_link)
-                driver.switch_to.window(driver.window_handles[1])
-                time.sleep(3)  # Wait for the detailed job page to load
+            # Find all job listings
+            jobs = driver.find_elements(By.CSS_SELECTOR, 'div.srp-jobtuple-wrapper')
 
-                # Extract additional details
-                role = industry_type = department = employment_type = role_category = education_ug = education_pg = key_skills = ""
+            # If no jobs are found, break the loop
+            if not jobs:
+                print(f"No more jobs found on page {page}. Ending.")
+                break
 
+            job_data_list = []
+
+            for job in jobs:
                 try:
-                    sections = driver.find_elements(By.CSS_SELECTOR, 'div.styles_details_Y424')
-                    for section in sections:
-                        try:
-                            label = section.find_element(By.CSS_SELECTOR, 'label').text.strip()
-                            value = section.find_element(By.CSS_SELECTOR, 'span').text.strip()
+                    if job_count >= 200:
+                        break  # Stop after scraping 200 jobs
 
-                            if "Role" in label:
-                                role = value
-                            elif "Industry Type" in label:
-                                industry_type = value
-                            elif "Department" in label:
-                                department = value
-                            elif "Employment Type" in label:
-                                employment_type = value
-                            elif "Role Category" in label:
-                                role_category = value
-                            elif "UG" in label:
-                                education_ug = value
-                            elif "PG" in label:
-                                education_pg = value
-                        except:
-                            continue
+                    # Extract basic details from the job card
+                    job_title = job.find_element(By.CSS_SELECTOR, 'a.title').text
+                    company_name = job.find_element(By.CSS_SELECTOR, 'a.comp-name').text
+
+                    try:
+                        rating_element = job.find_elements(By.CSS_SELECTOR, 'a.rating')
+                        ratings = rating_element[0].text if rating_element else "No rating"
+                    except:
+                        ratings = "No rating"
+
+                    try:
+                        experience = job.find_element(By.CSS_SELECTOR, 'span.expwdth').text
+                    except:
+                        experience = "Not specified"
+
+                    try:
+                        salary = job.find_element(By.CSS_SELECTOR, 'span.sal').text
+                    except:
+                        salary = "Not disclosed"
+
+                    try:
+                        location = job.find_element(By.CSS_SELECTOR, 'span.locWdth').text
+                    except:
+                        location = "Location not specified"
+
+                    try:
+                        job_description_summary = job.find_element(By.CSS_SELECTOR, 'span.job-desc').text
+                    except:
+                        job_description_summary = "No description"
+
+                    skills_elements = job.find_elements(By.CSS_SELECTOR, 'ul.tags-gt li')
+                    skills = [skill.text for skill in skills_elements] if skills_elements else []
+
+                    posting_date = job.find_element(By.CSS_SELECTOR, 'span.job-post-day').text
+                    job_link = job.find_element(By.CSS_SELECTOR, 'a.title').get_attribute('href')
+
+                    # Open job detail page in a new tab to scrape more details
+                    driver.execute_script("window.open(arguments[0], '_blank');", job_link)
+                    driver.switch_to.window(driver.window_handles[1])
+                    time.sleep(3)  # Wait for the detailed job page to load
+
+                    # Scrape additional details using WebDriverWait and CSS Selectors
+                    try:
+                        role = wait.until(EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, 'div.styles_details__Y424J span a'))).text
+                    except:
+                        role = "Not available"
+
+                    try:
+                        industry_type = wait.until(EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, 'div.styles_details__Y424J:nth-child(2) span a'))).text
+                    except:
+                        industry_type = "Not available"
+
+                    try:
+                        department = wait.until(EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, 'div.styles_details__Y424J:nth-child(3) span a'))).text
+                    except:
+                        department = "Not available"
+
+                    try:
+                        employment_type = wait.until(EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, 'div.styles_details__Y424J:nth-child(4) span'))).text
+                    except:
+                        employment_type = "Not available"
+
+                    try:
+                        role_category = wait.until(EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, 'div.styles_details__Y424J:nth-child(5) span'))).text
+                    except:
+                        role_category = "Not available"
+
+                    try:
+                        education_ug = wait.until(EC.presence_of_element_located(
+                            (By.XPATH, "//div[@class='styles_details__Y424J'][1]/span"))).text
+                    except:
+                        education_ug = "Not available"
+
+                    try:
+                        education_pg = wait.until(EC.presence_of_element_located(
+                            (By.XPATH, "//div[@class='styles_details__Y424J'][2]/span"))).text
+                    except:
+                        education_pg = "Not available"
+
+                    try:
+                        about_company = wait.until(EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, 'section.styles_about-company__lOsvW div.styles_detail__U2rw4'))).text
+                    except:
+                        about_company = "Not available"
+
+                    # Extract detailed job description
+                    try:
+                        job_desc_section = driver.find_element(By.CSS_SELECTOR, 'div.styles_JDC__dang-inner-html__h0K4t').text
+                    except:
+                        job_desc_section = "Not available"
+
+                    # Create job dictionary with all details
+                    job_data = {
+                        "Job Title": job_title,
+                        "Company Name": company_name,
+                        "Ratings": ratings,
+                        "Experience": experience,
+                        "Salary": salary,
+                        "Location": location,
+                        "Job Description (Summary)": job_description_summary,
+                        "Skills": skills,
+                        "Posting Date": posting_date,
+                        "Job Link": job_link,
+                        "Job Details": {
+                            "Job Description": job_desc_section,
+                            "Role": role,
+                            "Industry Type": industry_type,
+                            "Department": department,
+                            "Employment Type": employment_type,
+                            "Role Category": role_category,
+                            "Education": {
+                                "UG": education_ug,
+                                "PG": education_pg
+                            },
+                            "About Company": about_company,
+                        }
+                    }
+
+                    # Add the job data to the list
+                    job_data_list.append(job_data)
+                    job_count += 1  # Increment the job count
+
+                    # Close the detailed job tab and switch back to the listing tab
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
+                    time.sleep(2)
 
                 except Exception as e:
-                    print(f"Error extracting additional details: {e}")
+                    print(f"Error extracting data for a job: {e}")
 
-                # Extract detailed job description
-                try:
-                    job_desc_section = driver.find_element(By.CSS_SELECTOR, 'div.styles_JDC__dang-inner-html__h0K4t').text
-                except:
-                    job_desc_section = "Not available"
+            # Add the current page's jobs to the all_jobs_data list
+            all_jobs_data.extend(job_data_list)
 
-                # Extract key skills
-                try:
-                    key_skills_elements = driver.find_elements(By.CSS_SELECTOR, 'div.styles_key-skill_GIPn_ a')
-                    key_skills = ', '.join([skill.text for skill in key_skills_elements])
-                except:
-                    key_skills = ""
+            print(f"Scraped page {page} successfully.")
+            page += 1
+            time.sleep(2)  # Optional: add a short delay between page loads
 
-                # Create job dictionary with all details
-                job_data = {
-                    "Job Title": job_title,
-                    "Company Name": company_name,
-                    "Ratings": ratings,
-                    "Experience": experience,
-                    "Salary": salary,
-                    "Location": location,
-                    "Job Description (Summary)": job_description_summary,
-                    "Skills": skills,
-                    "Posting Date": posting_date,
-                    "Job Link": job_link,
-                    "Job Details": {
-                        "Job Description": job_desc_section,
-                        "Role": role,
-                        "Industry Type": industry_type,
-                        "Department": department,
-                        "Employment Type": employment_type,
-                        "Role Category": role_category,
-                        "Education": {
-                            "UG": education_ug,
-                            "PG": education_pg
-                        },
-                        "Key Skills": key_skills
-                    }
-                }
-
-                # Add the job data to the list
-                job_data_list.append(job_data)
-
-                # Close the detailed job tab and switch back to the listing tab
-                driver.close()
-                driver.switch_to.window(driver.window_handles[0])
-                time.sleep(2)
-
-            except Exception as e:
-                print(f"Error extracting data for a job: {e}")
-
-        return jsonify(job_data_list)
+        return jsonify(all_jobs_data)
 
     except Exception as e:
         return jsonify({"error": str(e)})
-    
+
     finally:
         driver.quit()
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=4000)
-
